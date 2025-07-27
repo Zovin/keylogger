@@ -89,7 +89,6 @@ def read_nonce_and_data(file_path):
         nonce_bytes = f.read(12)  # first 12 bytes = nonce
         encrypted_data = f.read()  # rest of file
 
-    # Convert nonce bytes to list of three 32-bit ints (big endian)
     nonce = [
         int.from_bytes(nonce_bytes[0:4], 'big'),
         int.from_bytes(nonce_bytes[4:8], 'big'),
@@ -99,15 +98,12 @@ def read_nonce_and_data(file_path):
     return nonce, encrypted_data
 
 def decrypt_chacha20(encrypted, nonce):
-    # You need your ChaCha20 function here that accepts nonce, key, block and returns keystream bytes
-    # This example assumes your ChaCha20 returns keystream for the current block
     global key, block
     
-    # Generate keystream for length of encrypted data
     keystream = []
     total_len = len(encrypted)
     while len(keystream) < total_len:
-        ks = ChaCha20(nonce)  # your ChaCha20 function should accept key and block
+        ks = ChaCha20(nonce)
         keystream.extend(ks)
         block += 1
     keystream = keystream[:total_len]
